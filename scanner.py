@@ -29,8 +29,6 @@ NSE_HOLIDAYS = [
 HOLIDAY_CAL = np.busdaycalendar(holidays=NSE_HOLIDAYS)
 
 # --- SECTOR MAP ---
-# Static sector dictionary for all Nifty 200 constituents
-# Saved to Firestore on every new signal for sector-based analysis
 SECTOR_MAP = {
     "RELIANCE.NS": "Energy", "ONGC.NS": "Energy", "BPCL.NS": "Energy",
     "IOC.NS": "Energy", "TATAPOWER.NS": "Energy", "ADANIGREEN.NS": "Energy",
@@ -212,6 +210,7 @@ NIFTY_200 = [
 ]
 
 
+# --- TRADE MANAGEMENT ---
 def update_active_trades():
     print("Checking active trades...")
     active_docs = db.collection("signals").where("status", "==", "ACTIVE").stream()
@@ -259,10 +258,60 @@ def update_active_trades():
             )
 
 
+# --- MACRO REGIME FILTER ---
+# Downloads Nifty 50 (^NSEI) and checks if close > 50 EMA.
+# Saves regime status to Firestore market_status/current for the dashboard.
+# Fail-safe: returns True (bullish) if download fails, so scanner never
+# silently stops due to a network error.
+def check_market_regime():
+    print("Checking market regime (Nifty 50 vs 50 EMA)...")
+    try:
+        nifty = yf.download("^NSEI", period="6mo", interval="1d", progress=False, auto_adjust=True)
+        if nifty.empty:
+            print("WARNING: Nifty data empty. Defaulting to bullish.")
+            return True
+        if isinstance(nifty.columns, pd.MultiIndex):
+            nifty.columns = nifty.columns.get_level_values(0)
+        nifty.columns = [c.lower() for c in nifty.columns]
+        nifty['ema_50'] = nifty['close'].ewm(span=50, adjust=False).mean()
+        latest = nifty.iloc[-1]
+        is_bullish    = float(latest['close']) > float(latest['ema_50'])
+        nifty_close   = round(float(latest['close']), 2)
+        ema_50_val    = round(float(latest['ema_50']), 2)
+        regime_status = "ON" if is_bullish else "OFF"
+        # Persist to Firestore so dashboard can read it in real time
+        db.collection("market_status").document("current").set({
+            "regime":       regime_status,
+            "nifty_close":  nifty_close,
+            "nifty_ema50":  ema_50_val,
+            "updated_at":   datetime.now(IST).isoformat()
+        })
+        print(f"Market Regime: {regime_status} | Nifty: {nifty_close} | EMA50: {ema_50_val}")
+        # Send notification only on regime change
+        if not is_bullish:
+            send_notification(
+                "\u26a0\ufe0f REGIME OFF — Market Bearish",
+                f"Nifty 50 ({nifty_close}) is BELOW 50 EMA ({ema_50_val}). No new entries today."
+            )
+        return is_bullish
+    except Exception as e:
+        print(f"Regime check failed: {e}. Defaulting to bullish (fail-safe).")
+        return True
+
+
+# --- MARKET SCANNING ---
 def scan_market():
     print("Scanning for new signals...")
     today_str = datetime.now(IST).strftime("%Y-%m-%d")
     today     = datetime.now(IST).date()
+
+    # REGIME GATE: Run check first. If market is bearish, skip all new entries.
+    # Existing active trades are NOT affected — they continue to be managed normally.
+    is_bullish = check_market_regime()
+    if not is_bullish:
+        print("Regime OFF: Skipping new entries. Active trade management continues.")
+        return
+
     for symbol in NIFTY_200:
         try:
             existing = db.collection("signals")\
@@ -296,12 +345,12 @@ def scan_market():
             candle_range = high - low
             if candle_range == 0:
                 continue
-            trend_cond   = (close > sma200) and (ema20 > ema50)
-            touch_ema20  = (low <= ema20 * 1.005) and (close >= ema20 * 0.998)
-            touch_ema50  = (low <= ema50 * 1.005) and (close >= ema50 * 0.998)
+            trend_cond    = (close > sma200) and (ema20 > ema50)
+            touch_ema20   = (low <= ema20 * 1.005) and (close >= ema20 * 0.998)
+            touch_ema50   = (low <= ema50 * 1.005) and (close >= ema50 * 0.998)
             pullback_cond = touch_ema20 or touch_ema50
-            trigger_cond = (close > open_) and (((close - low) / candle_range) > 0.5)
-            vol_cond     = volume > 1.5 * avg_vol
+            trigger_cond  = (close > open_) and (((close - low) / candle_range) > 0.5)
+            vol_cond      = volume > 1.5 * avg_vol
             if trend_cond and pullback_cond and trigger_cond and vol_cond:
                 entry  = close
                 sl     = low - (1.5 * atr)
@@ -310,25 +359,24 @@ def scan_market():
                     continue
                 target = entry + (2 * risk)
                 score  = 50
-                if volume > 2 * avg_vol:    score += 15
-                if 40 <= rsi <= 55:         score += 15
-                if ema20 > ema50 > sma200:  score += 20
-                # Look up sector from static map, default to 'Other'
+                if volume > 2 * avg_vol:   score += 15
+                if 40 <= rsi <= 55:        score += 15
+                if ema20 > ema50 > sma200: score += 20
                 sector = SECTOR_MAP.get(symbol, "Other")
                 signal_data = {
-                    "ticker":       symbol,
-                    "sector":       sector,
-                    "date":         today_str,
-                    "entry":        round(entry, 2),
-                    "stop_loss":    round(sl, 2),
-                    "target":       round(target, 2),
-                    "atr":          round(atr, 2),
-                    "rrr":          "1:2",
-                    "confidence":   int(score),
-                    "status":       "ACTIVE",
-                    "exit_price":   None,
+                    "ticker":         symbol,
+                    "sector":         sector,
+                    "date":           today_str,
+                    "entry":          round(entry, 2),
+                    "stop_loss":      round(sl, 2),
+                    "target":         round(target, 2),
+                    "atr":            round(atr, 2),
+                    "rrr":            "1:2",
+                    "confidence":     int(score),
+                    "status":         "ACTIVE",
+                    "exit_price":     None,
                     "pnl_percentage": None,
-                    "created_at":   datetime.now(IST).isoformat()
+                    "created_at":     datetime.now(IST).isoformat()
                 }
                 db.collection("signals").add(signal_data)
                 send_notification(
