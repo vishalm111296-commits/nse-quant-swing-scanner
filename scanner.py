@@ -10,22 +10,17 @@ import pytz
 import numpy as np
 
 # --- INITIALIZATION & CONFIG ---
-# Load Firebase service account JSON from GitHub Secrets
 firebase_creds_str = os.environ.get("FIREBASE_CONFIG")
 if not firebase_creds_str:
     raise ValueError("FIREBASE_CONFIG environment variable is missing.")
-
-# Parse JSON string to dictionary and initialize Firebase Admin SDK
 cred_dict = json.loads(firebase_creds_str)
 cred = credentials.Certificate(cred_dict)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# Initialize push notification topic and IST timezone
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "your_unique_nse_signals_topic")
 IST = pytz.timezone('Asia/Kolkata')
 
-# Define NSE trading holidays for 2026 (update annually every January)
 NSE_HOLIDAYS = [
     '2026-01-26', '2026-03-25', '2026-04-02', '2026-04-03',
     '2026-04-14', '2026-05-01', '2026-08-15', '2026-10-02',
@@ -33,9 +28,90 @@ NSE_HOLIDAYS = [
 ]
 HOLIDAY_CAL = np.busdaycalendar(holidays=NSE_HOLIDAYS)
 
+# --- SECTOR MAP ---
+# Static sector dictionary for all Nifty 200 constituents
+# Saved to Firestore on every new signal for sector-based analysis
+SECTOR_MAP = {
+    "RELIANCE.NS": "Energy", "ONGC.NS": "Energy", "BPCL.NS": "Energy",
+    "IOC.NS": "Energy", "TATAPOWER.NS": "Energy", "ADANIGREEN.NS": "Energy",
+    "ADANITRANS.NS": "Energy", "TORNTPOWER.NS": "Energy", "CESC.NS": "Energy",
+    "NTPC.NS": "Energy", "POWERGRID.NS": "Energy", "COALINDIA.NS": "Energy",
+    "PFCLTD.NS": "Energy", "RECLTD.NS": "Energy", "IRFC.NS": "Energy",
+    "HUDCO.NS": "Energy",
+    "TCS.NS": "IT", "INFY.NS": "IT", "WIPRO.NS": "IT", "HCLTECH.NS": "IT",
+    "TECHM.NS": "IT", "LTTS.NS": "IT", "PERSISTENT.NS": "IT",
+    "COFORGE.NS": "IT", "MPHASIS.NS": "IT", "KPITTECH.NS": "IT",
+    "TATAELXSI.NS": "IT", "HEXAWARE.NS": "IT", "NIITTECH.NS": "IT",
+    "RATEGAIN.NS": "IT", "HAPPSTMNDS.NS": "IT", "TATACOMM.NS": "IT",
+    "ROUTE.NS": "IT", "TANLA.NS": "IT", "NAUKRI.NS": "IT",
+    "HDFCBANK.NS": "Banks", "ICICIBANK.NS": "Banks", "SBIN.NS": "Banks",
+    "KOTAKBANK.NS": "Banks", "AXISBANK.NS": "Banks", "INDUSINDBK.NS": "Banks",
+    "BANKBARODA.NS": "Banks", "PNB.NS": "Banks", "CANBK.NS": "Banks",
+    "UNIONBANK.NS": "Banks", "IDFCFIRSTB.NS": "Banks", "FEDERALBNK.NS": "Banks",
+    "BANDHANBNK.NS": "Banks", "RBLBANK.NS": "Banks", "KARURVYSYA.NS": "Banks",
+    "SOUTHBANK.NS": "Banks",
+    "BAJFINANCE.NS": "Finance", "BAJAJFINSV.NS": "Finance", "MUTHOOTFIN.NS": "Finance",
+    "CHOLAFIN.NS": "Finance", "SHRIRAMFIN.NS": "Finance", "BAJAJHLDNG.NS": "Finance",
+    "HDFCLIFE.NS": "Finance", "SBILIFE.NS": "Finance", "ICICIPRULI.NS": "Finance",
+    "MFSL.NS": "Finance", "CANFINHOME.NS": "Finance", "GRUH.NS": "Finance",
+    "REPCO.NS": "Finance", "AAVAS.NS": "Finance", "CREDITACC.NS": "Finance",
+    "HINDUNILVR.NS": "FMCG", "ITC.NS": "FMCG", "NESTLEIND.NS": "FMCG",
+    "BRITANNIA.NS": "FMCG", "TATACONSUM.NS": "FMCG", "DABUR.NS": "FMCG",
+    "MARICO.NS": "FMCG", "GODREJCP.NS": "FMCG", "COLPAL.NS": "FMCG",
+    "MCDOWELL-N.NS": "FMCG", "UBL.NS": "FMCG", "BALRAMCHIN.NS": "FMCG",
+    "DHAMPUR.NS": "FMCG", "TRIVENI.NS": "FMCG", "EID.NS": "FMCG",
+    "SUNPHARMA.NS": "Pharma", "CIPLA.NS": "Pharma", "DRREDDY.NS": "Pharma",
+    "DIVISLAB.NS": "Pharma", "ZYDUSLIFE.NS": "Pharma", "LUPIN.NS": "Pharma",
+    "AUROPHARMA.NS": "Pharma", "BIOCON.NS": "Pharma", "ALKEM.NS": "Pharma",
+    "TORNTPHARM.NS": "Pharma", "GLAXO.NS": "Pharma", "PFIZER.NS": "Pharma",
+    "ABBOTINDIA.NS": "Pharma", "SANOFI.NS": "Pharma", "GLAND.NS": "Pharma",
+    "IPCALAB.NS": "Pharma", "NATCOPHARM.NS": "Pharma", "GRANULES.NS": "Pharma",
+    "SUVEN.NS": "Pharma", "LAURUSLABS.NS": "Pharma",
+    "LALPATHLAB.NS": "Healthcare", "METROPOLIS.NS": "Healthcare",
+    "THYROCARE.NS": "Healthcare", "KRSNAA.NS": "Healthcare", "APOLLOHOSP.NS": "Healthcare",
+    "MARUTI.NS": "Auto", "TITAN.NS": "Auto", "EICHERMOT.NS": "Auto",
+    "HEROMOTOCO.NS": "Auto", "BAJAJ-AUTO.NS": "Auto", "M&M.NS": "Auto",
+    "MRF.NS": "Auto", "APOLLOTYRE.NS": "Auto", "CEATLTD.NS": "Auto",
+    "BALKRISIND.NS": "Auto", "JKTYRE.NS": "Auto", "MOTHERSON.NS": "Auto",
+    "MINDAIND.NS": "Auto", "ENDURANCE.NS": "Auto", "CRAFTSMAN.NS": "Auto",
+    "MAHINDCIE.NS": "Auto", "SCHAEFFLER.NS": "Auto", "SKFINDIA.NS": "Auto",
+    "TIMKEN.NS": "Auto", "SUPRAJIT.NS": "Auto", "VARROC.NS": "Auto",
+    "LT.NS": "Infra", "ADANIENT.NS": "Infra", "ADANIPORTS.NS": "Infra",
+    "GMRINFRA.NS": "Infra", "IRB.NS": "Infra", "KNRCON.NS": "Infra",
+    "NCC.NS": "Infra", "PNCINFRA.NS": "Infra", "HGINFRA.NS": "Infra",
+    "GPPL.NS": "Infra", "CONCOR.NS": "Infra", "IRCTC.NS": "Infra",
+    "INDIGO.NS": "Infra", "SPICEJET.NS": "Infra", "INDIGRID.NS": "Infra",
+    "JSWSTEEL.NS": "Metals", "TATASTEEL.NS": "Metals", "HINDALCO.NS": "Metals",
+    "VEDL.NS": "Metals", "HINDZINC.NS": "Metals", "NMDC.NS": "Metals",
+    "SAIL.NS": "Metals", "JINDALSTEL.NS": "Metals", "RATNAMANI.NS": "Metals",
+    "APLAPOLLO.NS": "Metals", "WELCORP.NS": "Metals", "RAMKRISHNA.NS": "Metals",
+    "ASIANPAINT.NS": "Paints", "BERGEPAINT.NS": "Paints", "PIDILITIND.NS": "Chemicals",
+    "TATACHEM.NS": "Chemicals", "AARTIIND.NS": "Chemicals", "DEEPAKNTR.NS": "Chemicals",
+    "NAVINFLUOR.NS": "Chemicals", "SRF.NS": "Chemicals", "ATUL.NS": "Chemicals",
+    "FINEORG.NS": "Chemicals", "GALAXYSURF.NS": "Chemicals", "VINATIORGA.NS": "Chemicals",
+    "ALKYLAMINE.NS": "Chemicals", "CHAMBLFERT.NS": "Chemicals",
+    "COROMANDEL.NS": "Chemicals", "GNFC.NS": "Chemicals", "GSFC.NS": "Chemicals",
+    "PARADEEP.NS": "Chemicals",
+    "ULTRACEMCO.NS": "Cement", "GRASIM.NS": "Cement",
+    "HAVELLS.NS": "Electricals", "VOLTAS.NS": "Electricals", "SIEMENS.NS": "Electricals",
+    "ABB.NS": "Electricals", "BOSCHLTD.NS": "Electricals", "CUMMINSIND.NS": "Electricals",
+    "THERMAX.NS": "Electricals", "POLYCAB.NS": "Electricals", "KEI.NS": "Electricals",
+    "FINOLEX.NS": "Electricals", "VGUARD.NS": "Electricals", "WHIRLPOOL.NS": "Electricals",
+    "SYMPHONY.NS": "Electricals", "GRINDWELL.NS": "Electricals", "CARBORUNIV.NS": "Electricals",
+    "DMART.NS": "Retail", "TRENT.NS": "Retail", "NYKAA.NS": "Retail",
+    "ZOMATO.NS": "Consumer Tech", "PAYTM.NS": "Consumer Tech", "NAZARA.NS": "Consumer Tech",
+    "DLF.NS": "Realty", "GODREJPROP.NS": "Realty", "OBEROIRLTY.NS": "Realty",
+    "PRESTIGE.NS": "Realty", "SOBHA.NS": "Realty",
+    "ZEEL.NS": "Media", "SUNTV.NS": "Media", "PVRINOX.NS": "Media", "NETWORK18.NS": "Media",
+    "PAGEIND.NS": "Textiles", "MANYAVAR.NS": "Textiles",
+    "ASTRAL.NS": "Building Mat", "SUPREMEIND.NS": "Building Mat",
+    "PRINCEPIPE.NS": "Building Mat", "NILKAMAL.NS": "Building Mat",
+    "TTKPRESTIG.NS": "Consumer", "NABARD.NS": "Finance",
+    "JUBLFOOD.NS": "Consumer", "BATAINDIA.NS": "Consumer",
+}
+
 
 # --- UTILITY FUNCTIONS ---
-# Send push notifications to mobile phone via ntfy.sh
 def send_notification(title, message):
     try:
         requests.post(
@@ -48,8 +124,6 @@ def send_notification(title, message):
         print(f"Notification failed: {e}")
 
 
-# Calculate RSI using Wilder's exact smoothing (com=period-1, min_periods=period)
-# This matches TradingView and Zerodha Kite — NOT standard EWM
 def compute_rsi_wilder(close, period=14):
     delta = close.diff()
     gain = delta.clip(lower=0)
@@ -60,7 +134,6 @@ def compute_rsi_wilder(close, period=14):
     return 100 - (100 / (1 + rs))
 
 
-# Download lightweight OHLCV data without indicators (used only for trade management)
 def download_ohlc(ticker, period="1mo"):
     df = yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=True)
     if df.empty:
@@ -71,7 +144,6 @@ def download_ohlc(ticker, period="1mo"):
     return df
 
 
-# Download full 1Y OHLCV data and compute all technical indicators (used for scanning)
 def download_and_prep(ticker, period="1y"):
     df = yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=True)
     if df.empty:
@@ -79,28 +151,19 @@ def download_and_prep(ticker, period="1y"):
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df.columns = [c.lower() for c in df.columns]
-
-    # Compute Moving Averages
     df['EMA_20'] = df['close'].ewm(span=20, adjust=False).mean()
     df['EMA_50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['SMA_200'] = df['close'].rolling(200).mean()
     df['avg_vol_20'] = df['volume'].rolling(20).mean()
-
-    # Compute Wilder's RSI (matches TradingView/Kite exactly)
     df['RSI_14'] = compute_rsi_wilder(df['close'], 14)
-
-    # Compute Wilder's ATR — com=13 means alpha=1/14, not standard EWM
     hl = df['high'] - df['low']
     hc = (df['high'] - df['close'].shift()).abs()
     lc = (df['low'] - df['close'].shift()).abs()
     tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
     df['ATRr_14'] = tr.ewm(com=13, min_periods=14, adjust=False).mean()
-
     return df
 
 
-# --- NIFTY 200 UNIVERSE ---
-# Full Nifty 200 constituent list with .NS suffix for Yahoo Finance
 NIFTY_200 = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
     "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS",
@@ -125,7 +188,7 @@ NIFTY_200 = [
     "BANKBARODA.NS", "PNB.NS", "CANBK.NS", "UNIONBANK.NS", "IDFCFIRSTB.NS",
     "FEDERALBNK.NS", "BANDHANBNK.NS", "RBLBANK.NS", "KARURVYSYA.NS", "SOUTHBANK.NS",
     "MRF.NS", "APOLLOTYRE.NS", "CEATLTD.NS", "BALKRISIND.NS", "JKTYRE.NS",
-    "TATACHEM.NS", "PIDILITIND.NS", "AARTIIND.NS", "DEEPAKNTR.NS", "NAVINFLUOR.NS",
+    "TATACHEM.NS", "AARTIIND.NS", "DEEPAKNTR.NS", "NAVINFLUOR.NS",
     "SRF.NS", "ATUL.NS", "FINEORG.NS", "GALAXYSURF.NS", "VINATIORGA.NS",
     "PAGEIND.NS", "MANYAVAR.NS", "TTKPRESTIG.NS", "VGUARD.NS", "SYMPHONY.NS",
     "POLYCAB.NS", "KEI.NS", "FINOLEX.NS", "SUPRAJIT.NS", "VARROC.NS",
@@ -133,7 +196,7 @@ NIFTY_200 = [
     "HINDZINC.NS", "NMDC.NS", "SAIL.NS", "JINDALSTEL.NS", "RATNAMANI.NS",
     "APLAPOLLO.NS", "WELCORP.NS", "GMRINFRA.NS", "IRB.NS", "KNRCON.NS",
     "NCC.NS", "PNCINFRA.NS", "HGINFRA.NS", "GPPL.NS", "CONCOR.NS",
-    "ASTRAL.NS", "SUPREMEIND.NS", "PRINCEPIPE.NS", "FINOLEX.NS", "NILKAMAL.NS",
+    "ASTRAL.NS", "SUPREMEIND.NS", "PRINCEPIPE.NS", "NILKAMAL.NS",
     "ZEEL.NS", "SUNTV.NS", "PVRINOX.NS", "NAZARA.NS", "NETWORK18.NS",
     "MFSL.NS", "CANFINHOME.NS", "GRUH.NS", "REPCO.NS", "AAVAS.NS",
     "LTTS.NS", "PERSISTENT.NS", "COFORGE.NS", "MPHASIS.NS", "KPITTECH.NS",
@@ -144,59 +207,45 @@ NIFTY_200 = [
     "CHAMBLFERT.NS", "COROMANDEL.NS", "GNFC.NS", "GSFC.NS", "PARADEEP.NS",
     "TATACOMM.NS", "ROUTE.NS", "TANLA.NS", "MAHINDCIE.NS", "SCHAEFFLER.NS",
     "SKFINDIA.NS", "TIMKEN.NS", "GRINDWELL.NS", "CARBORUNIV.NS", "PFCLTD.NS",
-    "RECLTD.NS", "IRFC.NS", "HUDCO.NS", "NABARD.NS", "CREDITACC.NS"
+    "RECLTD.NS", "IRFC.NS", "HUDCO.NS", "NABARD.NS", "CREDITACC.NS",
+    "BHARTIARTL.NS"
 ]
 
 
-# --- TRADE MANAGEMENT ---
-# Check all active trades against latest OHLC for SL hit, Target hit, or 10-day Time Stop
 def update_active_trades():
     print("Checking active trades...")
     active_docs = db.collection("signals").where("status", "==", "ACTIVE").stream()
     today = datetime.now(IST).date()
-
     for doc in active_docs:
         sig = doc.to_dict()
         ticker = sig["ticker"]
-
-        # Use lightweight OHLC download (no indicator computation needed here)
         df = download_ohlc(ticker, period="1mo")
         if len(df) < 1:
             continue
-
         latest = df.iloc[-1]
         new_status = "ACTIVE"
         exit_price = None
-
-        # Log if Yahoo Finance hasn't published today's candle yet
         latest_date = df.index[-1].date()
         if latest_date != today:
-            print(f"INFO: {ticker} using previous candle {latest_date} (today's not yet available).")
-
-        low = float(latest['low'])
-        high = float(latest['high'])
+            print(f"INFO: {ticker} using previous candle {latest_date}.")
+        low   = float(latest['low'])
+        high  = float(latest['high'])
         close = float(latest['close'])
-
-        # Check Stop Loss hit (intraday low touched SL price)
         if low <= sig['stop_loss']:
             exit_price = sig['stop_loss']
             new_status = "LOSS"
-        # Check Target hit (intraday high reached target price)
         elif high >= sig['target']:
             exit_price = sig['target']
             new_status = "WIN"
-        # Check 10-trading-day Time Stop using NSE holiday calendar
         else:
             try:
-                entry_date = datetime.strptime(sig['date'], "%Y-%m-%d").date()
+                entry_date   = datetime.strptime(sig['date'], "%Y-%m-%d").date()
                 trading_days = int(np.busday_count(entry_date, today, busdaycal=HOLIDAY_CAL))
                 if trading_days >= 10:
                     exit_price = close
                     new_status = "TIME_EXIT"
             except Exception as e:
                 print(f"Date parsing error for {ticker}: {e}")
-
-        # If trade closed, update Firestore record and send push notification
         if new_status != "ACTIVE":
             pnl = ((exit_price - sig['entry']) / sig['entry']) * 100
             db.collection("signals").document(doc.id).update({
@@ -210,116 +259,86 @@ def update_active_trades():
             )
 
 
-# --- MARKET SCANNING ---
-# Scan Nifty 200 for new ATR-Volume Demand Pullback strategy entries
 def scan_market():
     print("Scanning for new signals...")
     today_str = datetime.now(IST).strftime("%Y-%m-%d")
-    today = datetime.now(IST).date()
-
+    today     = datetime.now(IST).date()
     for symbol in NIFTY_200:
         try:
-            # Deduplication: skip symbol if an active trade already exists
             existing = db.collection("signals")\
                 .where("ticker", "==", symbol)\
                 .where("status", "==", "ACTIVE")\
                 .limit(1).stream()
             if any(True for _ in existing):
                 continue
-
-            # Download full year of data with all indicators computed
             df = download_and_prep(symbol, period="1y")
             if len(df) < 200:
                 continue
-
-            latest = df.iloc[-1]
-
-            # Strict date guard: skip if Yahoo Finance returned stale data
+            latest      = df.iloc[-1]
             latest_date = df.index[-1].date()
             if latest_date != today:
                 print(f"WARNING: {symbol} stale candle ({latest_date}), skipping.")
                 continue
-
-            # Extract scalar values from the latest candle row
-            close = float(latest['close'])
-            open_ = float(latest['open'])
-            high = float(latest['high'])
-            low = float(latest['low'])
-            volume = float(latest['volume'])
-            ema20 = float(latest['EMA_20'])
-            ema50 = float(latest['EMA_50'])
-            sma200 = float(latest['SMA_200'])
-            atr = float(latest['ATRr_14'])
-            rsi = float(latest['RSI_14'])
+            close   = float(latest['close'])
+            open_   = float(latest['open'])
+            high    = float(latest['high'])
+            low     = float(latest['low'])
+            volume  = float(latest['volume'])
+            ema20   = float(latest['EMA_20'])
+            ema50   = float(latest['EMA_50'])
+            sma200  = float(latest['SMA_200'])
+            atr     = float(latest['ATRr_14'])
+            rsi     = float(latest['RSI_14'])
             avg_vol = float(latest['avg_vol_20'])
-
-            # Consolidated NaN guard for all required indicator values
             required_vals = [atr, avg_vol, rsi, ema20, ema50, sma200]
             if any(pd.isna(v) for v in required_vals) or avg_vol == 0:
                 continue
-
-            # Prevent division by zero (circuit-limit stocks have zero range)
             candle_range = high - low
             if candle_range == 0:
                 continue
-
-            # --- STRATEGY CONDITIONS ---
-            # Condition 1: Uptrend — price above 200 SMA, 20 EMA above 50 EMA
-            trend_cond = (close > sma200) and (ema20 > ema50)
-
-            # Condition 2: Pullback — intraday low touched EMA, close confirmed above it
-            touch_ema20 = (low <= ema20 * 1.005) and (close >= ema20 * 0.998)
-            touch_ema50 = (low <= ema50 * 1.005) and (close >= ema50 * 0.998)
+            trend_cond   = (close > sma200) and (ema20 > ema50)
+            touch_ema20  = (low <= ema20 * 1.005) and (close >= ema20 * 0.998)
+            touch_ema50  = (low <= ema50 * 1.005) and (close >= ema50 * 0.998)
             pullback_cond = touch_ema20 or touch_ema50
-
-            # Condition 3: Trigger — bullish candle closing in upper half of range
             trigger_cond = (close > open_) and (((close - low) / candle_range) > 0.5)
-
-            # Condition 4: Volume — surge of 1.5x the 20-day average
-            vol_cond = volume > 1.5 * avg_vol
-
-            # --- SIGNAL GENERATION ---
+            vol_cond     = volume > 1.5 * avg_vol
             if trend_cond and pullback_cond and trigger_cond and vol_cond:
-                entry = close
-                sl = low - (1.5 * atr)       # SL = candle low minus 1.5x ATR
-                risk = entry - sl
-                if risk <= 0:                 # Safety check against negative risk
+                entry  = close
+                sl     = low - (1.5 * atr)
+                risk   = entry - sl
+                if risk <= 0:
                     continue
-                target = entry + (2 * risk)  # Target = 1:2 Risk-Reward minimum
-
-                # Confidence score: 50 base + up to 50 bonus points
-                score = 50
-                if volume > 2 * avg_vol: score += 15       # Strong volume surge
-                if 40 <= rsi <= 55: score += 15            # RSI in pullback zone
-                if ema20 > ema50 > sma200: score += 20     # Perfect trend alignment
-
-                # Build signal document for Firestore
+                target = entry + (2 * risk)
+                score  = 50
+                if volume > 2 * avg_vol:    score += 15
+                if 40 <= rsi <= 55:         score += 15
+                if ema20 > ema50 > sma200:  score += 20
+                # Look up sector from static map, default to 'Other'
+                sector = SECTOR_MAP.get(symbol, "Other")
                 signal_data = {
-                    "ticker": symbol,
-                    "date": today_str,
-                    "entry": round(entry, 2),
-                    "stop_loss": round(sl, 2),
-                    "target": round(target, 2),
-                    "atr": round(atr, 2),
-                    "rrr": "1:2",
-                    "confidence": int(score),
-                    "status": "ACTIVE",
-                    "exit_price": None,
+                    "ticker":       symbol,
+                    "sector":       sector,
+                    "date":         today_str,
+                    "entry":        round(entry, 2),
+                    "stop_loss":    round(sl, 2),
+                    "target":       round(target, 2),
+                    "atr":          round(atr, 2),
+                    "rrr":          "1:2",
+                    "confidence":   int(score),
+                    "status":       "ACTIVE",
+                    "exit_price":   None,
                     "pnl_percentage": None,
-                    "created_at": datetime.now(IST).isoformat()
+                    "created_at":   datetime.now(IST).isoformat()
                 }
-
                 db.collection("signals").add(signal_data)
                 send_notification(
                     f"\U0001f7e2 NEW SIGNAL: {symbol}",
-                    f"Entry: \u20b9{entry:.2f} | SL: \u20b9{sl:.2f} | T1: \u20b9{target:.2f} | Score: {score}"
+                    f"{sector} | Entry: \u20b9{entry:.2f} | SL: \u20b9{sl:.2f} | T1: \u20b9{target:.2f} | Score: {score}"
                 )
-
         except Exception as e:
             print(f"Error processing {symbol}: {e}")
 
 
-# --- MAIN EXECUTION ---
 if __name__ == "__main__":
     update_active_trades()
     scan_market()
