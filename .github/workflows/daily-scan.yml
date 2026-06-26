@@ -1,0 +1,44 @@
+name: Daily NSE Scanner
+
+# Runs automatically at 4:15 PM IST every weekday
+# 10:45 UTC = 4:15 PM IST (45 min after NSE close guarantees EOD data on Yahoo)
+on:
+  schedule:
+    - cron: '45 10 * * 1-5'
+  workflow_dispatch: # Allow manual trigger from GitHub Actions tab
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # Kill job if it hangs (e.g. Yahoo Finance timeout)
+
+    steps:
+      # Step 1: Pull latest code from repository
+      - uses: actions/checkout@v4
+
+      # Step 2: Set up Python 3.11 with pip cache for faster re-runs
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # Step 3: Install all dependencies
+      # pandas_ta is intentionally excluded — all math is computed natively
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            "yfinance>=0.2.50" \
+            "pandas>=2.0.0" \
+            "numpy>=1.24.0" \
+            "firebase-admin>=6.5.0" \
+            "requests>=2.31.0" \
+            "pytz>=2024.1"
+
+      # Step 4: Run scanner with Firebase and ntfy secrets injected
+      - name: Run Scanner
+        env:
+          FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python scanner.py
