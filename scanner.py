@@ -53,6 +53,7 @@ SECTOR_MAP = {
     "HDFCLIFE.NS": "Finance", "SBILIFE.NS": "Finance", "ICICIPRULI.NS": "Finance",
     "MFSL.NS": "Finance", "CANFINHOME.NS": "Finance", "GRUH.NS": "Finance",
     "REPCO.NS": "Finance", "AAVAS.NS": "Finance", "CREDITACC.NS": "Finance",
+    "NABARD.NS": "Finance",
     "HINDUNILVR.NS": "FMCG", "ITC.NS": "FMCG", "NESTLEIND.NS": "FMCG",
     "BRITANNIA.NS": "FMCG", "TATACONSUM.NS": "FMCG", "DABUR.NS": "FMCG",
     "MARICO.NS": "FMCG", "GODREJCP.NS": "FMCG", "COLPAL.NS": "FMCG",
@@ -104,8 +105,9 @@ SECTOR_MAP = {
     "PAGEIND.NS": "Textiles", "MANYAVAR.NS": "Textiles",
     "ASTRAL.NS": "Building Mat", "SUPREMEIND.NS": "Building Mat",
     "PRINCEPIPE.NS": "Building Mat", "NILKAMAL.NS": "Building Mat",
-    "TTKPRESTIG.NS": "Consumer", "NABARD.NS": "Finance",
-    "JUBLFOOD.NS": "Consumer", "BATAINDIA.NS": "Consumer",
+    "TTKPRESTIG.NS": "Consumer", "JUBLFOOD.NS": "Consumer", "BATAINDIA.NS": "Consumer",
+    # FIX: BHARTIARTL.NS was missing from SECTOR_MAP — mapped to Telecom
+    "BHARTIARTL.NS": "Telecom",
 }
 
 
@@ -222,11 +224,15 @@ def update_active_trades():
         if len(df) < 1:
             continue
         latest = df.iloc[-1]
+        latest_date = df.index[-1].date()
+
+        # FIX: Do not act on stale candle data — skip if candle is not today's
+        if latest_date != today:
+            print(f"WARNING: {ticker} has stale candle ({latest_date}), skipping trade update.")
+            continue
+
         new_status = "ACTIVE"
         exit_price = None
-        latest_date = df.index[-1].date()
-        if latest_date != today:
-            print(f"INFO: {ticker} using previous candle {latest_date}.")
         low   = float(latest['low'])
         high  = float(latest['high'])
         close = float(latest['close'])
@@ -259,10 +265,6 @@ def update_active_trades():
 
 
 # --- MACRO REGIME FILTER ---
-# Downloads Nifty 50 (^NSEI) and checks if close > 50 EMA.
-# Saves regime status to Firestore market_status/current for the dashboard.
-# Fail-safe: returns True (bullish) if download fails, so scanner never
-# silently stops due to a network error.
 def check_market_regime():
     print("Checking market regime (Nifty 50 vs 50 EMA)...")
     try:
@@ -279,7 +281,6 @@ def check_market_regime():
         nifty_close   = round(float(latest['close']), 2)
         ema_50_val    = round(float(latest['ema_50']), 2)
         regime_status = "ON" if is_bullish else "OFF"
-        # Persist to Firestore so dashboard can read it in real time
         db.collection("market_status").document("current").set({
             "regime":       regime_status,
             "nifty_close":  nifty_close,
@@ -287,10 +288,9 @@ def check_market_regime():
             "updated_at":   datetime.now(IST).isoformat()
         })
         print(f"Market Regime: {regime_status} | Nifty: {nifty_close} | EMA50: {ema_50_val}")
-        # Send notification only on regime change
         if not is_bullish:
             send_notification(
-                "\u26a0\ufe0f REGIME OFF — Market Bearish",
+                "\u26a0\ufe0f REGIME OFF \u2014 Market Bearish",
                 f"Nifty 50 ({nifty_close}) is BELOW 50 EMA ({ema_50_val}). No new entries today."
             )
         return is_bullish
@@ -305,8 +305,6 @@ def scan_market():
     today_str = datetime.now(IST).strftime("%Y-%m-%d")
     today     = datetime.now(IST).date()
 
-    # REGIME GATE: Run check first. If market is bearish, skip all new entries.
-    # Existing active trades are NOT affected — they continue to be managed normally.
     is_bullish = check_market_regime()
     if not is_bullish:
         print("Regime OFF: Skipping new entries. Active trade management continues.")

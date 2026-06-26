@@ -24,12 +24,18 @@ function msUntilNextScan() {
   while (target.getDay() === 0 || target.getDay() === 6) target.setDate(target.getDate() + 1);
   return target - istNow;
 }
+
+// FIX: format countdown with seconds when under 5 minutes for precision
 function formatCountdown(ms) {
   if (ms <= 0) return 'Running soon...';
   const h = Math.floor(ms / 3600000);
   const m = Math.floor((ms % 3600000) / 60000);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  const s = Math.floor((ms % 60000) / 1000);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m >= 5) return `${m}m`;
+  return `${m}m ${s}s`; // last 5 minutes: show seconds
 }
+
 function tradeProgress(entry, sl, target, exitPrice, status) {
   const ref   = (status !== 'ACTIVE' && exitPrice != null) ? exitPrice : entry;
   const range = target - sl;
@@ -62,6 +68,8 @@ const SECTOR_COLORS = {
   'Textiles':     'bg-fuchsia-900 text-fuchsia-300',
   'Building Mat': 'bg-zinc-700 text-zinc-300',
   'Consumer':     'bg-orange-900 text-orange-200',
+  // FIX: added Telecom for BHARTIARTL
+  'Telecom':      'bg-teal-800 text-teal-200',
 };
 
 function TradingViewChart({ ticker }) {
@@ -94,7 +102,7 @@ function TradingViewChart({ ticker }) {
 // --- MAIN COMPONENT ---
 export default function Dashboard() {
   const [allSignals, setAllSignals]     = useState([]);
-  const [stats, setStats]               = useState({ winRate: '–', totalPnl: '0.00', activeCount: 0, totalTrades: 0, profitFactor: '–' });
+  const [stats, setStats]               = useState({ winRate: '\u2013', totalPnl: '0.00', activeCount: 0, totalTrades: 0, profitFactor: '\u2013' });
   const [regime, setRegime]             = useState({ regime: 'LOADING', nifty_close: 0, nifty_ema50: 0 });
   const [loading, setLoading]           = useState(true);
   const [refreshing, setRefreshing]     = useState(false);
@@ -106,9 +114,21 @@ export default function Dashboard() {
   const [countdown, setCountdown]       = useState(msUntilNextScan());
   const [lastRefresh, setLastRefresh]   = useState(new Date());
 
+  // FIX: use 1-second tick when under 5 minutes, 60s otherwise
   useEffect(() => {
-    const timer = setInterval(() => setCountdown(msUntilNextScan()), 60000);
-    return () => clearInterval(timer);
+    const tick = () => {
+      const ms = msUntilNextScan();
+      setCountdown(ms);
+      return ms;
+    };
+    let timer;
+    const schedule = () => {
+      const ms = tick();
+      const interval = ms <= 5 * 60 * 1000 ? 1000 : 60000;
+      timer = setTimeout(() => { schedule(); }, interval);
+    };
+    schedule();
+    return () => clearTimeout(timer);
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -136,9 +156,9 @@ export default function Dashboard() {
       const closedTrades = wins + losses;
       const profitFactor = grossLosses > 0
         ? (grossWins / grossLosses).toFixed(2)
-        : wins > 0 ? '∞' : '–';
+        : wins > 0 ? '\u221e' : '\u2013';
       setStats({
-        winRate:     closedTrades > 0 ? ((wins / closedTrades) * 100).toFixed(1) : '–',
+        winRate:     closedTrades > 0 ? ((wins / closedTrades) * 100).toFixed(1) : '\u2013',
         totalPnl:    totalPnl.toFixed(2),
         activeCount: active,
         totalTrades: closedTrades,
@@ -178,8 +198,8 @@ export default function Dashboard() {
   const regimeBanner    = regimeIsUnknown
     ? { bg: 'bg-gray-800 border-gray-600',     text: 'text-gray-400',  label: 'REGIME: AWAITING FIRST SCAN',              sub: 'Run the scanner once to activate' }
     : regimeIsOn
-    ? { bg: 'bg-green-900/40 border-green-700', text: 'text-green-400', label: '✅ REGIME ON — BULLISH (SAFE TO TRADE)',     sub: `Nifty 50: ₹${regime.nifty_close?.toLocaleString('en-IN')} • Above 50 EMA (₹${regime.nifty_ema50?.toLocaleString('en-IN')})` }
-    : { bg: 'bg-red-900/40 border-red-700',     text: 'text-red-400',   label: '⚠️ REGIME OFF — BEARISH (NO NEW ENTRIES)', sub: `Nifty 50: ₹${regime.nifty_close?.toLocaleString('en-IN')} • Below 50 EMA (₹${regime.nifty_ema50?.toLocaleString('en-IN')})` };
+    ? { bg: 'bg-green-900/40 border-green-700', text: 'text-green-400', label: '\u2705 REGIME ON \u2014 BULLISH (SAFE TO TRADE)',     sub: `Nifty 50: \u20b9${regime.nifty_close?.toLocaleString('en-IN')} \u2022 Above 50 EMA (\u20b9${regime.nifty_ema50?.toLocaleString('en-IN')})` }
+    : { bg: 'bg-red-900/40 border-red-700',     text: 'text-red-400',   label: '\u26a0\ufe0f REGIME OFF \u2014 BEARISH (NO NEW ENTRIES)', sub: `Nifty 50: \u20b9${regime.nifty_close?.toLocaleString('en-IN')} \u2022 Below 50 EMA (\u20b9${regime.nifty_ema50?.toLocaleString('en-IN')})` };
 
   if (loading) return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center gap-3">
@@ -195,12 +215,12 @@ export default function Dashboard() {
       <div className="sticky top-0 bg-gray-900 border-b border-gray-800 px-4 pt-4 pb-2 z-10">
         <div className="flex justify-between items-start mb-1">
           <div>
-            <h1 className="text-xl font-bold text-green-400">⚡ Quant Swing</h1>
-            <p className="text-xs text-gray-500">ATR-Volume Demand Pullback · Nifty 200</p>
+            <h1 className="text-xl font-bold text-green-400">\u26a1 Quant Swing</h1>
+            <p className="text-xs text-gray-500">ATR-Volume Demand Pullback \u00b7 Nifty 200</p>
           </div>
           <button onClick={handleRefresh} disabled={refreshing}
             className="flex items-center gap-1 bg-gray-800 px-3 py-1.5 rounded-lg text-xs text-gray-300 active:bg-gray-700">
-            <span className={refreshing ? 'animate-spin inline-block' : ''}>↻</span>
+            <span className={refreshing ? 'animate-spin inline-block' : ''}>\u21bb</span>
             {refreshing ? 'Loading...' : 'Refresh'}
           </button>
         </div>
@@ -293,6 +313,9 @@ export default function Dashboard() {
             const progress    = tradeProgress(sig.entry, sig.stop_loss, sig.target, sig.exit_price, sig.status);
             const progColor   = progress >= 66 ? 'bg-green-500' : progress >= 33 ? 'bg-yellow-500' : 'bg-red-500';
             const sectorColor = SECTOR_COLORS[sig.sector] ?? 'bg-gray-800 text-gray-400';
+            // FIX: guard against division by zero in position sizing
+            const slDiff = sig.entry - sig.stop_loss;
+            const positionShares = slDiff > 0 ? Math.max(1, Math.floor(1000 / slDiff)) : null;
             return (
               <div key={sig.id} className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
                 <div className="p-4 cursor-pointer" onClick={() => setExpandedId(isExpanded ? null : sig.id)}>
@@ -308,14 +331,14 @@ export default function Dashboard() {
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`px-2 py-0.5 text-xs rounded-full font-semibold ${statusColor(sig.status)}`}>{sig.status}</span>
-                      <span className="text-gray-600 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                      <span className="text-gray-600 text-xs">{isExpanded ? '\u25b2' : '\u25bc'}</span>
                     </div>
                   </div>
                   <div className="mb-1">
                     <div className="flex justify-between text-xs text-gray-500 mb-1">
-                      <span>SL ₹{sig.stop_loss?.toFixed(0)}</span>
-                      <span>Entry ₹{sig.entry?.toFixed(0)}</span>
-                      <span>T ₹{sig.target?.toFixed(0)}</span>
+                      <span>SL \u20b9{sig.stop_loss?.toFixed(0)}</span>
+                      <span>Entry \u20b9{sig.entry?.toFixed(0)}</span>
+                      <span>T \u20b9{sig.target?.toFixed(0)}</span>
                     </div>
                     <div className="w-full bg-gray-700 rounded-full h-2">
                       <div className={`h-2 rounded-full transition-all ${progColor}`} style={{ width: `${progress}%` }} />
@@ -323,7 +346,7 @@ export default function Dashboard() {
                   </div>
                   {sig.status !== 'ACTIVE' && sig.pnl_percentage != null && (
                     <div className="mt-2 flex justify-between text-sm">
-                      <span className="text-gray-400 text-xs">Exit ₹{sig.exit_price?.toFixed(2)}</span>
+                      <span className="text-gray-400 text-xs">Exit \u20b9{sig.exit_price?.toFixed(2)}</span>
                       <span className={`font-bold ${sig.pnl_percentage >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         {sig.pnl_percentage > 0 ? '+' : ''}{sig.pnl_percentage?.toFixed(2)}%
                       </span>
@@ -339,9 +362,9 @@ export default function Dashboard() {
                       <PriceCell label="Target"    value={sig.target}    className="text-green-400" />
                     </div>
                     <div className="grid grid-cols-3 gap-3">
-                      <MetricCell label="Risk %" value={riskPct ? `${riskPct}%` : '–'} color="text-orange-400" />
+                      <MetricCell label="Risk %" value={riskPct ? `${riskPct}%` : '\u2013'} color="text-orange-400" />
                       <MetricCell label="RRR"     value={sig.rrr ?? '1:2'}             color="text-blue-400" />
-                      <MetricCell label="ATR"     value={sig.atr ? `₹${sig.atr}` : '–'} color="text-gray-300" />
+                      <MetricCell label="ATR"     value={sig.atr ? `\u20b9${sig.atr}` : '\u2013'} color="text-gray-300" />
                     </div>
                     {sig.confidence && (
                       <div>
@@ -354,14 +377,12 @@ export default function Dashboard() {
                         </div>
                       </div>
                     )}
-                    {riskPct && sig.entry > 0 && (
+                    {positionShares != null && riskPct && (
                       <div className="bg-gray-900 rounded-lg p-2 text-xs text-gray-400">
-                        <span className="text-gray-300 font-semibold">📐 Position Sizing: </span>
+                        <span className="text-gray-300 font-semibold">\ud83d\udcd0 Position Sizing: </span>
                         Risk is <span className="text-orange-400">{riskPct}%</span> of entry.
-                        For ₹1L at 1% risk → buy{' '}
-                        <span className="text-white font-bold">
-                          {Math.max(1, Math.floor(1000 / (sig.entry - sig.stop_loss)))}
-                        </span>{' '}shares.
+                        For \u20b91L at 1% risk \u2192 buy{' '}
+                        <span className="text-white font-bold">{positionShares}</span>{' '}shares.
                       </div>
                     )}
                     <p className="text-xs text-gray-700">Created: {sig.created_at?.slice(0, 16).replace('T', ' ')} IST</p>
@@ -374,7 +395,7 @@ export default function Dashboard() {
           {/* EMPTY STATE */}
           {filtered.length === 0 && (
             <div className="text-center py-12">
-              <p className="text-4xl mb-3">📊</p>
+              <p className="text-4xl mb-3">\ud83d\udcca</p>
               <p className="text-gray-400 font-semibold mb-1">
                 {sectorFilter !== 'ALL' ? `No ${sectorFilter} signals` :
                  tab === 'ACTIVE' ? 'No active trades' :
@@ -399,7 +420,7 @@ const StatCard = ({ label, value, color }) => (
 const PriceCell = ({ label, value, className = 'text-white' }) => (
   <div>
     <p className="text-gray-500 text-xs">{label}</p>
-    <p className={`font-bold text-sm ${className}`}>₹{value?.toFixed(2)}</p>
+    <p className={`font-bold text-sm ${className}`}>\u20b9{value?.toFixed(2)}</p>
   </div>
 );
 const MetricCell = ({ label, value, color = 'text-white' }) => (

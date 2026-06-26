@@ -5,7 +5,7 @@ name: Daily NSE Scanner
 on:
   schedule:
     - cron: '30 14 * * 1-5'
-  workflow_dispatch: # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
 
 jobs:
   scan:
@@ -36,3 +36,13 @@ jobs:
           FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: python scanner.py
+
+      # FIX: notify via ntfy if the scanner job fails (e.g. secret missing, crash)
+      - name: Notify on failure
+        if: failure()
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          curl -s -X POST "https://ntfy.sh/${NTFY_TOPIC}" \
+            -H "Title: \u26a0\ufe0f Scanner FAILED" \
+            -d "GitHub Action daily-scan.yml failed. Check logs: https://github.com/${{ github.repository }}/actions"

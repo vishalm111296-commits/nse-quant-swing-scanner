@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background-color: #111827; /* bg-gray-900 fallback before Tailwind loads */
+/* FIX: scrollbar-hide is not a built-in Tailwind class.
+   This hides the scrollbar on the horizontal sector pill row
+   across all browsers without needing an extra plugin. */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;     /* Firefox */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;             /* Chrome, Safari, Opera */
 }
