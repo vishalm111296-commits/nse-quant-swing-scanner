@@ -1,19 +1,5 @@
-# Dependencies
-node_modules/
-
-# Build output
-dist/
-
-# Local environment — NEVER commit real keys
+node_modules
+dist
 .env
 .env.local
-.env.production
-
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-
-# OS files
-.DS_Store
-Thumbs.db
+*.log
