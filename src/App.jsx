@@ -19,7 +19,7 @@ function msUntilNextScan() {
   const istOffset = 5.5 * 60 * 60 * 1000;
   const istNow = new Date(now.getTime() + istOffset - now.getTimezoneOffset() * 60000);
   const target = new Date(istNow);
-  target.setHours(16, 15, 0, 0);
+  target.setHours(20, 0, 0, 0); // 8:00 PM IST
   if (istNow >= target) target.setDate(target.getDate() + 1);
   while (target.getDay() === 0 || target.getDay() === 6) target.setDate(target.getDate() + 1);
   return target - istNow;
@@ -381,7 +381,7 @@ export default function Dashboard() {
                  tab === 'CLOSED' ? 'No closed trades yet' : 'No signals yet'}
               </p>
               <p className="text-gray-600 text-sm">Next scan in <span className="text-green-500">{formatCountdown(countdown)}</span></p>
-              <p className="text-gray-700 text-xs mt-1">Weekdays at 4:15 PM IST</p>
+              <p className="text-gray-700 text-xs mt-1">Weekdays at 8:00 PM IST</p>
             </div>
           )}
         </div>
