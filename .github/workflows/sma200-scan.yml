@@ -1,7 +1,6 @@
-name: Weekly SMA 200 Trend Scanner
+name: Weekly SMA 200 Trend Scanner v2 (Nifty 200 + Quality Filters)
 
-# Runs every Friday at 6:00 PM IST (after NSE market close)
-# 12:30 UTC = 6:00 PM IST
+# Runs every Friday at 6:00 PM IST (12:30 UTC)
 on:
   schedule:
     - cron: '30 12 * * 5'
@@ -10,7 +9,7 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45  # increased for 200 stocks + quality checks
 
     steps:
       - uses: actions/checkout@v4
@@ -31,12 +30,12 @@ jobs:
             "requests>=2.31.0" \
             "pytz>=2024.1"
 
-      - name: Run SMA 200 Trend Scanner
+      - name: Run SMA 200 Trend Scanner v2
         env:
           FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           PORTFOLIO_VALUE: ${{ secrets.PORTFOLIO_VALUE }}
-        run: python sma200_scanner.py
+        run: python sma200_scanner_v2.py
 
       - name: Notify on failure
         if: failure()
@@ -44,5 +43,5 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
           curl -s -X POST "https://ntfy.sh/${NTFY_TOPIC}" \
-            -H "Title: ⚠️ SMA200 Scanner FAILED" \
+            -H "Title: ⚠️ SMA200 v2 Scanner FAILED" \
             -d "GitHub Action sma200-scan.yml failed. Check logs: https://github.com/${{ github.repository }}/actions"
