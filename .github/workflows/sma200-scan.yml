@@ -1,0 +1,48 @@
+name: Weekly SMA 200 Trend Scanner
+
+# Runs every Friday at 6:00 PM IST (after NSE market close)
+# 12:30 UTC = 6:00 PM IST
+on:
+  schedule:
+    - cron: '30 12 * * 5'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            "yfinance>=0.2.50" \
+            "pandas>=2.0.0" \
+            "numpy>=1.24.0" \
+            "firebase-admin>=6.5.0" \
+            "requests>=2.31.0" \
+            "pytz>=2024.1"
+
+      - name: Run SMA 200 Trend Scanner
+        env:
+          FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          PORTFOLIO_VALUE: ${{ secrets.PORTFOLIO_VALUE }}
+        run: python sma200_scanner.py
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          curl -s -X POST "https://ntfy.sh/${NTFY_TOPIC}" \
+            -H "Title: ⚠️ SMA200 Scanner FAILED" \
+            -d "GitHub Action sma200-scan.yml failed. Check logs: https://github.com/${{ github.repository }}/actions"
