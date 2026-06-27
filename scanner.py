@@ -23,7 +23,7 @@ IST = pytz.timezone('Asia/Kolkata')
 
 NSE_HOLIDAYS = [
     '2026-01-26', '2026-03-25', '2026-04-02', '2026-04-03',
-    '2026-04-14', '2026-05-01', '2026-08-15', '2026-10-02',
+    '2026-04-14', '2026-05-01', '2026-10-02',
     '2026-10-20', '2026-10-21', '2026-11-05', '2026-12-25'
 ]
 HOLIDAY_CAL = np.busdaycalendar(holidays=NSE_HOLIDAYS)
@@ -130,6 +130,7 @@ def compute_rsi_wilder(close, period=14):
     loss = (-delta.clip(upper=0))
     avg_gain = gain.ewm(com=period - 1, min_periods=period, adjust=False).mean()
     avg_loss = loss.ewm(com=period - 1, min_periods=period, adjust=False).mean()
+    avg_loss = avg_loss.replace(0, 1e-10)
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
@@ -166,7 +167,7 @@ def download_and_prep(ticker, period="1y"):
 
 NIFTY_200 = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-    "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS",
+    "HINDUNILVR.NS", "SBIN.NS", "ITC.NS", "KOTAKBANK.NS",
     "LT.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS", "SUNPHARMA.NS",
     "TITAN.NS", "BAJFINANCE.NS", "NESTLEIND.NS", "WIPRO.NS", "ULTRACEMCO.NS",
     "ONGC.NS", "NTPC.NS", "POWERGRID.NS", "TECHM.NS", "HCLTECH.NS",
@@ -208,7 +209,7 @@ NIFTY_200 = [
     "TATACOMM.NS", "ROUTE.NS", "TANLA.NS", "MAHINDCIE.NS", "SCHAEFFLER.NS",
     "SKFINDIA.NS", "TIMKEN.NS", "GRINDWELL.NS", "CARBORUNIV.NS", "PFCLTD.NS",
     "RECLTD.NS", "IRFC.NS", "HUDCO.NS", "NABARD.NS", "CREDITACC.NS",
-    "BHARTIARTL.NS"
+    "JUBLFOOD.NS", "BATAINDIA.NS", "BHARTIARTL.NS"
 ]
 
 
@@ -218,50 +219,55 @@ def update_active_trades():
     active_docs = db.collection("signals").where("status", "==", "ACTIVE").stream()
     today = datetime.now(IST).date()
     for doc in active_docs:
-        sig = doc.to_dict()
-        ticker = sig["ticker"]
-        df = download_ohlc(ticker, period="1mo")
-        if len(df) < 1:
-            continue
-        latest = df.iloc[-1]
-        latest_date = df.index[-1].date()
+        try:
+            sig = doc.to_dict()
+            ticker = sig["ticker"]
+            df = download_ohlc(ticker, period="1mo")
+            if len(df) < 1:
+                continue
+            latest = df.iloc[-1]
+            latest_date = df.index[-1].date()
 
-        # FIX: Do not act on stale candle data — skip if candle is not today's
-        if latest_date != today:
-            print(f"WARNING: {ticker} has stale candle ({latest_date}), skipping trade update.")
-            continue
+            # FIX: Do not act on stale candle data — skip if candle is not today's
+            if latest_date != today:
+                print(f"WARNING: {ticker} has stale candle ({latest_date}), skipping trade update.")
+                continue
 
-        new_status = "ACTIVE"
-        exit_price = None
-        low   = float(latest['low'])
-        high  = float(latest['high'])
-        close = float(latest['close'])
-        if low <= sig['stop_loss']:
-            exit_price = sig['stop_loss']
-            new_status = "LOSS"
-        elif high >= sig['target']:
-            exit_price = sig['target']
-            new_status = "WIN"
-        else:
-            try:
-                entry_date   = datetime.strptime(sig['date'], "%Y-%m-%d").date()
-                trading_days = int(np.busday_count(entry_date, today, busdaycal=HOLIDAY_CAL))
-                if trading_days >= 10:
-                    exit_price = close
-                    new_status = "TIME_EXIT"
-            except Exception as e:
-                print(f"Date parsing error for {ticker}: {e}")
-        if new_status != "ACTIVE":
-            pnl = ((exit_price - sig['entry']) / sig['entry']) * 100
-            db.collection("signals").document(doc.id).update({
-                "status": new_status,
-                "exit_price": float(exit_price),
-                "pnl_percentage": round(float(pnl), 4)
-            })
-            send_notification(
-                f"Trade Closed: {new_status}",
-                f"{ticker} exited at \u20b9{exit_price:.2f}. PnL: {pnl:.2f}%"
-            )
+            new_status = "ACTIVE"
+            exit_price = None
+            low   = float(latest['low'])
+            high  = float(latest['high'])
+            close = float(latest['close'])
+            if low <= sig['stop_loss']:
+                exit_price = sig['stop_loss']
+                new_status = "LOSS"
+            elif high >= sig['target']:
+                exit_price = sig['target']
+                new_status = "WIN"
+            else:
+                try:
+                    entry_date   = datetime.strptime(sig['date'], "%Y-%m-%d").date()
+                    trading_days = int(np.busday_count(entry_date, today, busdaycal=HOLIDAY_CAL))
+                    if trading_days >= 10:
+                        exit_price = close
+                        new_status = "TIME_EXIT"
+                except Exception as e:
+                    print(f"Date parsing error for {ticker}: {e}")
+            if new_status != "ACTIVE":
+                pnl = 0
+                if sig['entry'] != 0:
+                    pnl = ((exit_price - sig['entry']) / sig['entry']) * 100
+                db.collection("signals").document(doc.id).update({
+                    "status": new_status,
+                    "exit_price": float(exit_price),
+                    "pnl_percentage": round(float(pnl), 4)
+                })
+                send_notification(
+                    f"Trade Closed: {new_status}",
+                    f"{ticker} exited at ₹{exit_price:.2f}. PnL: {pnl:.2f}%"
+                )
+        except Exception as e:
+            print(f"Error updating active trade for {doc.id}: {e}")
 
 
 # --- MACRO REGIME FILTER ---
@@ -290,7 +296,7 @@ def check_market_regime():
         print(f"Market Regime: {regime_status} | Nifty: {nifty_close} | EMA50: {ema_50_val}")
         if not is_bullish:
             send_notification(
-                "\u26a0\ufe0f REGIME OFF \u2014 Market Bearish",
+                "⚠️ REGIME OFF — Market Bearish",
                 f"Nifty 50 ({nifty_close}) is BELOW 50 EMA ({ema_50_val}). No new entries today."
             )
         return is_bullish
@@ -378,8 +384,8 @@ def scan_market():
                 }
                 db.collection("signals").add(signal_data)
                 send_notification(
-                    f"\U0001f7e2 NEW SIGNAL: {symbol}",
-                    f"{sector} | Entry: \u20b9{entry:.2f} | SL: \u20b9{sl:.2f} | T1: \u20b9{target:.2f} | Score: {score}"
+                    f"🟢 NEW SIGNAL: {symbol}",
+                    f"{sector} | Entry: ₹{entry:.2f} | SL: ₹{sl:.2f} | T1: ₹{target:.2f} | Score: {score}"
                 )
         except Exception as e:
             print(f"Error processing {symbol}: {e}")
