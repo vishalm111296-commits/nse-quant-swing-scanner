@@ -252,7 +252,8 @@ def update_active_trades():
             except Exception as e:
                 print(f"Date parsing error for {ticker}: {e}")
         if new_status != "ACTIVE":
-            pnl = ((exit_price - sig['entry']) / sig['entry']) * 100
+            entry_val = sig.get('entry')
+            pnl = ((exit_price - entry_val) / entry_val) * 100 if entry_val else 0.0
             db.collection("signals").document(doc.id).update({
                 "status": new_status,
                 "exit_price": float(exit_price),

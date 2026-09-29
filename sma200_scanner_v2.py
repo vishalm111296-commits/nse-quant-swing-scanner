@@ -438,6 +438,14 @@ def scan_sma200_trend_v2():
         below_data = next((s for s in scan_results['below_sma200'] if s['ticker'] == symbol), None)
         reason = "BELOW_SMA200" if below_data else "FAILED_QUALITY_FILTER"
 
+        holding_days = None
+        if holding.get('entry_date'):
+            try:
+                entry_dt = datetime.strptime(holding['entry_date'], "%Y-%m-%d").date()
+                holding_days = max(1, (today - entry_dt).days)
+            except Exception:
+                pass
+
         db.collection("sma200_positions").document(holding['id']).update({
             "status":         "CLOSED",
             "exit_price":     round(exit_price, 2),
@@ -447,6 +455,7 @@ def scan_sma200_trend_v2():
             "net_pnl_pct":    round(net_pnl_pct, 4),
             "exit_reason":    reason,
             "txn_costs":      round(txn_costs, 2),
+            "holding_days":   holding_days,
             "updated_at":     datetime.now(IST).isoformat()
         })
 
